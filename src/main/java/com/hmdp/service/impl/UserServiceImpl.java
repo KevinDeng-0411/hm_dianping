@@ -101,6 +101,17 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
 
     }
 
+    @Override
+    public Result logout(String token) {
+        // 如果token不为空，删除Redis中的用户会话信息
+        if (token != null && !token.isEmpty()) {
+            String key = LOGIN_USER_KEY + token;
+            stringRedisTemplate.delete(key);
+            log.debug("用户登出，删除token: {}", token);
+        }
+        return Result.ok();
+    }
+
     private User createUserWithPhone(String phone) {
         //创建用户
         User user = new User();
