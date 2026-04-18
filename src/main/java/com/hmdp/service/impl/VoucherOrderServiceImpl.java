@@ -9,6 +9,8 @@ import com.hmdp.service.IVoucherOrderService;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.hmdp.utils.RedisIdWorker;
 import com.hmdp.utils.UserHolder;
+import org.springframework.aop.framework.AopContext;
+import org.springframework.aop.framework.AopProxy;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -17,7 +19,7 @@ import java.time.LocalDateTime;
 
 /**
  * <p>
- *  服务实现类
+ * 服务实现类
  * </p>
  *
  * @author 虎哥
@@ -32,7 +34,7 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
     private RedisIdWorker redisIdWorker;
 
     @Override
-    @Transactional
+
     public Result seckillVoucher(Long voucherId) {
         //根据优惠券id获取优惠券
         SeckillVoucher voucher = seckillVoucherService.getById(voucherId);
@@ -46,13 +48,36 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
             return Result.fail("秒杀尚未开始");
         }
         //在秒杀时间内 检查库存
-        if (voucher.getStock()<1) {
+        if (voucher.getStock() < 1) {
             //库存不足 返回异常信息
             return Result.fail("库存不足");
         }
         //库存充足 扣减库存 创建订单信息 保存订单到数据库
+
+        //实现一人一单
+        Long userId = UserHolder.getUser().getId();
+
+        synchronized (userId.toString().intern()) {
+            IVoucherOrderService proxy = (IVoucherOrderService) AopContext.currentProxy();
+            return proxy.createVoucherOrder(voucherId);
+        }
+
+    }
+
+    @Transactional
+    public Result createVoucherOrder(Long voucherId) {
+        //根据用户ID和优惠券ID获取订单
+        Long userId = UserHolder.getUser().getId();
+
+
+        //判断订单是否存在 存在 则返回错误信息
+        Integer count = query().eq("user_id", userId).eq("voucher_id", voucherId).count();
+        if (count > 0) {
+            return Result.fail("一人仅限制一单，用户已经购买过一次");
+        }
+        //不存在 进行库存扣减创建订单
         boolean isUpdate = seckillVoucherService.update().setSql("stock = stock - 1")
-                .eq("voucher_id", voucherId).eq("stock",voucher.getStock())
+                .eq("voucher_id", voucherId).gt("stock", 0)
                 .update();
         if (!isUpdate) {
             //扣减失败 - 有可能并发扣减为负数？？
@@ -62,7 +87,8 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
 
         long orderId = redisIdWorker.nextId("order");
         voucherOrder.setId(orderId);
-        voucherOrder.setUserId(UserHolder.getUser().getId());
+
+        voucherOrder.setUserId(userId);
         voucherOrder.setVoucherId(voucherId);
 
         //保存订单到数据库
@@ -70,5 +96,7 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
 
         //返回订单ID
         return Result.ok(orderId);
+
     }
+
 }
