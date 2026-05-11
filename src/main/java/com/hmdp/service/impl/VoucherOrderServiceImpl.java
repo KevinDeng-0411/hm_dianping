@@ -138,9 +138,9 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
         //尝试获取锁
         boolean tryLock = lock.tryLock();
         if (!tryLock) {
-            //获取锁失败 返回错误信息
+            //获取锁失败 抛出异常使消息进入Pending List重试
             log.error("不允许重复下单 ");
-            return;
+            throw new RuntimeException("获取锁失败，用户重复下单");
         }
         //成功 执行下面的逻辑创建订单
         try {
@@ -264,20 +264,19 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
 
         Long voucherId = voucherOrder.getVoucherId();
 
-        //判断订单是否存在 存在 则返回错误信息
+        //判断订单是否存在 存在 则抛出异常使消息进入Pending List
         Integer count = query().eq("user_id", userId).eq("voucher_id", voucherId).count();
         if (count > 0) {
             log.error("用户已经购买过");
-            return;
+            throw new RuntimeException("用户已购买过该优惠券");
         }
         //不存在 进行库存扣减创建订单
         boolean isUpdate = seckillVoucherService.update().setSql("stock = stock - 1")
                 .eq("voucher_id", voucherId).gt("stock", 0)
                 .update();
         if (!isUpdate) {
-            //扣减失败 - 有可能并发扣减为负数？？
             log.error("库存不足");
-            return;
+            throw new RuntimeException("库存不足");
         }
 
         //保存订单到数据库

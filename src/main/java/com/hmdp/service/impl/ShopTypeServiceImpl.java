@@ -41,7 +41,11 @@ public class ShopTypeServiceImpl extends ServiceImpl<ShopTypeMapper, ShopType> i
             List<ShopType> shopTypeList = JSONUtil.toList(typeJson, ShopType.class);
             return Result.ok(shopTypeList);
         }
-        
+        // 命中空值缓存，防止缓存穿透
+        if (typeJson != null) {
+            return Result.fail("店铺类型不存在");
+        }
+
         // 不存在 则从数据库中进行查询
         List<ShopType> shopTypes = query().orderByAsc("sort").list();
         

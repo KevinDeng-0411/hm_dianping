@@ -78,7 +78,8 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
             //获取锁成功 DoubleCheck 此时是否有缓存 否则开启独立线程实现缓存重建
             shopJson = stringRedisTemplate.opsForValue().get(key);
             if (StrUtil.isNotBlank(shopJson)) {
-                return JSONUtil.toBean(shopJson, Shop.class);
+                RedisData cachedData = JSONUtil.toBean(shopJson, RedisData.class);
+                return JSONUtil.toBean((JSONObject) cachedData.getData(), Shop.class);
             }
 
             CACHE_REBUILD_EXECUTOR.submit(() -> {
