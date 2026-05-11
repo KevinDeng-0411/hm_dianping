@@ -1,0 +1,10 @@
+.git
+.gitignore
+.idea
+.vscode
+target
+*.md
+user_tokens.txt
+docker-compose.yml
+Dockerfile
+.dockerignore

@@ -1,0 +1,5 @@
+spring:
+  datasource:
+    url: jdbc:mysql://mysql:3306/hm_dianping?useSSL=false&serverTimezone=UTC
+  redis:
+    host: redis
