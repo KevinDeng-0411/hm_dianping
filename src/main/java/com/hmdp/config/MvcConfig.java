@@ -23,6 +23,11 @@ public class MvcConfig implements WebMvcConfigurer {
                         , "/shop/**"
                         , "/shop-type/**"
                         , "/voucher/**"
+                        , "/doc.html"
+                        , "/swagger-resources/**"
+                        , "/webjars/**"
+                        , "/v2/**"
+                        , "/swagger-ui.html/**"
                 );
     }
 }
