@@ -64,7 +64,14 @@ docker logs hmdp-nginx
 2. `queryWithMutex()` — SETNX 互斥锁 + Double Check 防击穿
 3. `queryWithLogicalExpire()` — 逻辑过期 + 线程池异步重建（最优方案，需配合 `RedisData` 封装）
 
-缓存更新：先写 DB 后删缓存（`Cache-Aside`），有 TTL 兜底。
+缓存更新：先写 DB 后删缓存（`Cache-Aside`）。删除失败时发布到 Redis Stream `stream.cache-invalidate`，由 `CacheInvalidateService` 退避重试（1s/2s/3s），最大 3 次后放弃，依赖 TTL 兜底保证最终一致性。
+
+### 滑动窗口限流
+
+`@RateLimit(permits, windowSeconds, keyType)` 注解 + AOP 切面 `RateLimitAspect`，支持全局/IP/用户三维度。通过 Lua 脚本 `rate_limit.lua`（ZADD + ZREMRANGEBYSCORE + ZCARD）原子校验 Redis Sorted Set 滑动窗口，超频抛出 `RateLimitException`，由 `WebExceptionAdvice` 统一返回"请求过于频繁"。
+
+- 秒杀接口：10次/60秒/用户
+- 发验证码：1次/60秒/IP
 
 ### 分布式 ID 生成器（`RedisIdWorker.java`）
 

@@ -1,6 +1,7 @@
 package com.hmdp.controller;
 
 
+import com.hmdp.annotation.RateLimit;
 import com.hmdp.dto.LoginFormDTO;
 import com.hmdp.dto.Result;
 import com.hmdp.dto.UserDTO;
@@ -34,9 +35,7 @@ public class UserController {
     @Resource
     private IUserInfoService userInfoService;
 
-    /**
-     * 发送手机验证码
-     */
+    @RateLimit(permits = 1, windowSeconds = 60, keyType = RateLimit.KeyType.IP)
     @PostMapping("code")
     public Result sendCode(@RequestParam("phone") String phone, HttpSession session) {
         //  发送短信验证码并保存验证码
