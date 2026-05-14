@@ -11,12 +11,14 @@ import com.hmdp.service.IShopService;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.hmdp.utils.RedisConstants;
 import com.hmdp.utils.RedisData;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import javax.annotation.Resource;
 import java.time.LocalDateTime;
+import java.util.Collections;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -29,6 +31,7 @@ import java.util.concurrent.TimeUnit;
  * @author 虎哥
  * @since 2021-12-22
  */
+@Slf4j
 @Service
 public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IShopService {
 
@@ -215,8 +218,20 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
         }
         //1.更新数据库
         updateById(shop);
-        //2.删除缓存
-        stringRedisTemplate.delete(RedisConstants.CACHE_SHOP_KEY + shop.getId());
+        //2.删除缓存，失败时发布到Stream补偿重试
+        String key = RedisConstants.CACHE_SHOP_KEY + shop.getId();
+        try {
+            stringRedisTemplate.delete(key);
+        } catch (Exception e) {
+            log.error("删除缓存失败，发布补偿消息: {}", key, e);
+            try {
+                stringRedisTemplate.opsForStream().add(
+                        RedisConstants.CACHE_INVALIDATE_STREAM,
+                        Collections.singletonMap("key", key));
+            } catch (Exception ex) {
+                log.error("发布缓存补偿消息失败，依赖TTL兜底: {}", key, ex);
+            }
+        }
         return Result.ok();
     }
 }

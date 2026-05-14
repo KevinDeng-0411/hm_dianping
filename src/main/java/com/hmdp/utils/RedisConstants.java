@@ -21,5 +21,7 @@ public class RedisConstants {
     public static final String SHOP_GEO_KEY = "shop:geo:";
     public static final String USER_SIGN_KEY = "sign:";
 
-
+    public static final String CACHE_INVALIDATE_STREAM = "stream.cache-invalidate";
+    public static final String CACHE_INVALIDATE_GROUP = "cache-group";
+    public static final int CACHE_INVALIDATE_MAX_RETRIES = 3;
 }
