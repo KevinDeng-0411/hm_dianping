@@ -2,6 +2,11 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## 工作规则
+
+- **提交规范**：每次代码改动完成后，自动 `git add` + `git commit`（中文 feat/fix/docs 格式，说明做了什么）+ `git push origin master && git push github master`，无需等用户确认。
+- **CLAUDE.md 同步**：每次新增功能或架构变更，同步更新本文档对应章节。
+
 ## 项目概述
 
 黑马点评 — Spring Boot 本地生活服务点评平台。技术栈：Spring Boot 2.3.12 + MyBatis-Plus 3.4.3 + Redis + MySQL + Redisson 3.13.6 + Docker。
