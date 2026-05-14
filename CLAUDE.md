@@ -6,6 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - **提交规范**：每次代码改动完成后，自动 `git add` + `git commit`（中文 feat/fix/docs 格式，说明做了什么）+ `git push origin master && git push github master`，无需等用户确认。
 - **CLAUDE.md 同步**：每次新增功能或架构变更，同步更新本文档对应章节。
+- **注释保留**：不删除现有注释（尤其是 TODO、演进说明、历史方案标记），只在需要时新增注释。注释记录了项目的优化历程，有价值。
 
 ## 项目概述
 

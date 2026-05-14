@@ -4,6 +4,7 @@ import cn.hutool.core.util.BooleanUtil;
 import cn.hutool.core.util.StrUtil;
 import cn.hutool.json.JSONObject;
 import cn.hutool.json.JSONUtil;
+import com.github.benmanes.caffeine.cache.Cache;
 import com.hmdp.dto.Result;
 import com.hmdp.entity.Shop;
 import com.hmdp.mapper.ShopMapper;
@@ -38,16 +39,23 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
     @Resource
     private StringRedisTemplate stringRedisTemplate;
 
+    @Resource
+    private Cache<Long, Shop> shopCache;
+
     @Override
     public Result queryByID(Long id) {
-        //缓存穿透 Shop shop = queryWithPassThrough(id);
-        //缓存击穿 基于互斥锁
-        Shop shop = queryWithMutex(id);
-        //缓存击穿 基于逻辑过期
-        //Shop shop = queryWithLogicalExpire(id);
+        // L1: Caffeine 本地缓存
+        Shop shop = shopCache.getIfPresent(id);
+        if (shop != null) {
+            return Result.ok(shop);
+        }
+        // L2: Redis + DB（互斥锁防击穿）
+        shop = queryWithMutex(id);
         if (shop == null) {
             return Result.fail("店铺不存在");
         }
+        // 写入 Caffeine
+        shopCache.put(id, shop);
         return Result.ok(shop);
     }
 
@@ -218,8 +226,9 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
         }
         //1.更新数据库
         updateById(shop);
-        //2.删除缓存，失败时发布到Stream补偿重试
-        String key = RedisConstants.CACHE_SHOP_KEY + shop.getId();
+        //2.删除 L1 Caffeine + L2 Redis，失败时发布到Stream补偿重试
+        shopCache.invalidate(id);
+        String key = RedisConstants.CACHE_SHOP_KEY + id;
         try {
             stringRedisTemplate.delete(key);
         } catch (Exception e) {

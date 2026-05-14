@@ -2,6 +2,7 @@ package com.hmdp.service.impl;
 
 import cn.hutool.core.util.StrUtil;
 import cn.hutool.json.JSONUtil;
+import com.github.benmanes.caffeine.cache.Cache;
 import com.hmdp.dto.Result;
 import com.hmdp.entity.ShopType;
 import com.hmdp.mapper.ShopTypeMapper;
@@ -17,7 +18,7 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * <p>
- * 服务实现类
+ *  服务实现类
  * </p>
  *
  * @author 虎哥
@@ -29,38 +30,42 @@ public class ShopTypeServiceImpl extends ServiceImpl<ShopTypeMapper, ShopType> i
     @Resource
     private StringRedisTemplate stringRedisTemplate;
 
+    @Resource
+    private Cache<String, List<ShopType>> shopTypeListCache;
+
+    private static final String TYPE_LIST_KEY = "list";
+
     @Override
-    //TODO 存在很多优化空间！！：现在已经有查询为空存入空值放穿透 设置过期时间
+    //TODO 存在很多优化空间！！：已增加Caffeine二级缓存 + 空值缓存防穿透 + 过期时间
     public Result queryTypeList() {
-        // 从redis中查询店铺类型
+        // L1: Caffeine 本地缓存
+        List<ShopType> cached = shopTypeListCache.getIfPresent(TYPE_LIST_KEY);
+        if (cached != null) {
+            return Result.ok(cached);
+        }
+        // L2: Redis
         String key = RedisConstants.CACHE_SHOP_TYPE_KEY;
         String typeJson = stringRedisTemplate.opsForValue().get(key);
-        // 判断是否存在
         if (StrUtil.isNotBlank(typeJson)) {
-            // 存在 直接返回
             List<ShopType> shopTypeList = JSONUtil.toList(typeJson, ShopType.class);
+            shopTypeListCache.put(TYPE_LIST_KEY, shopTypeList);
             return Result.ok(shopTypeList);
         }
-        // 命中空值缓存，防止缓存穿透
         if (typeJson != null) {
             return Result.fail("店铺类型不存在");
         }
 
-        // 不存在 则从数据库中进行查询
+        // L3: DB
         List<ShopType> shopTypes = query().orderByAsc("sort").list();
-        
-        // 再判断从数据库中取出的对象是否存在
         if (shopTypes == null || shopTypes.isEmpty()) {
-            // TODO 不存在 则缓存空值，防止缓存穿透
+            // 不存在 则缓存空值，防止缓存穿透
             stringRedisTemplate.opsForValue().set(key, "", RedisConstants.CACHE_NULL_TTL, TimeUnit.MINUTES);
             return Result.fail("店铺类型不存在");
         }
-        
-        // 存在 则转为json对象存入redis，设置过期时间
+
         String jsonStr = JSONUtil.toJsonStr(shopTypes);
         stringRedisTemplate.opsForValue().set(key, jsonStr, RedisConstants.CACHE_SHOP_TYPE_TTL, TimeUnit.MINUTES);
-        
-        // 返回
+        shopTypeListCache.put(TYPE_LIST_KEY, shopTypes);
         return Result.ok(shopTypes);
     }
 }
