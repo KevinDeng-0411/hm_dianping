@@ -28,6 +28,5 @@ end
 redis.call("incrby", stockKey, -1)
 --3.2 将订单加入集合中
 redis.call("sadd", orderKey, userID)
--- 3.3 发送消息 到 消息队列中 XADD stream.orders * k1 v1 k2 v2
-redis.call("xadd", "stream.orders", "*", "userId", userID, "voucherId", voucherID, "id", orderID)
+-- 3.3 扣减成功，消息发送改由 Java 层通过 Kafka 完成
 return 0

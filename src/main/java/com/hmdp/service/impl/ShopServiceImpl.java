@@ -19,7 +19,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 import javax.annotation.Resource;
 import java.time.LocalDateTime;
-import java.util.Collections;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -41,6 +40,8 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
 
     @Resource
     private Cache<Long, Shop> shopCache;
+    @Resource
+    private CacheInvalidateService cacheInvalidateService;
 
     @Override
     public Result queryByID(Long id) {
@@ -226,20 +227,13 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
         }
         //1.更新数据库
         updateById(shop);
-        //2.删除 L1 Caffeine + L2 Redis，失败时发布到Stream补偿重试
+        //2.删除 L1 Caffeine + L2 Redis，失败时通过Kafka补偿重试
         shopCache.invalidate(id);
         String key = RedisConstants.CACHE_SHOP_KEY + id;
         try {
             stringRedisTemplate.delete(key);
         } catch (Exception e) {
-            log.error("删除缓存失败，发布补偿消息: {}", key, e);
-            try {
-                stringRedisTemplate.opsForStream().add(
-                        RedisConstants.CACHE_INVALIDATE_STREAM,
-                        Collections.singletonMap("key", key));
-            } catch (Exception ex) {
-                log.error("发布缓存补偿消息失败，依赖TTL兜底: {}", key, ex);
-            }
+            cacheInvalidateService.sendInvalidateTask(key);
         }
         return Result.ok();
     }

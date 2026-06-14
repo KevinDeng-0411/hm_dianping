@@ -3,3 +3,14 @@ spring:
     url: jdbc:mysql://mysql:3306/hm_dianping?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
   redis:
     host: redis
+  kafka:
+    bootstrap-servers: kafka:9092
+    consumer:
+      group-id: hmdp-group
+      auto-offset-reset: earliest
+      enable-auto-commit: true
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
