@@ -1,28 +1,31 @@
 #!/usr/bin/env bash
-# Create a seckill voucher via the API and print its id.
-# The backend pre-warms the Redis stock key (seckill:stock:<id>) on creation.
+# Create a seckill voucher (tb_voucher + tb_seckill_voucher) directly in the
+# hmdp-mysql container and pre-warm the Redis stock key. Prints the voucher id.
+#
+# Note: goes straight to SQL because the /voucher/seckill API path can't map a
+# full Voucher onto the current tb_voucher schema cleanly (some entity fields
+# have no matching column). For benchmark data, direct SQL is the stable route.
 #
 # Usage:   ./01-create-voucher.sh [stock]
-# Env:     BASE   default http://localhost:8081
-# Output:  prints RESP and VOUCHER_ID=<id>
+# Output:  VOUCHER_ID=<id>
 set -euo pipefail
 
-BASE=${BASE:-http://localhost:8081}
 STOCK=${1:-200}
 
-BODY='{"shopId":1,"title":"Benchmark seckill voucher","subTitle":"JMeter","type":1,"status":1,"stock":'"$STOCK"',"beginTime":"2026-09-05T00:00:00","endTime":"2099-12-31T23:59:59"}'
+VOUCHER_ID=$(docker exec hmdp-mysql mysql -uroot -p1234 hm_dianping -N -e \
+  "INSERT INTO tb_voucher (title,pay_value,actual_value,type,status)
+     VALUES ('bench-seckill',100,80,1,1);
+   SET @v = LAST_INSERT_ID();
+   INSERT INTO tb_seckill_voucher (voucher_id,stock,begin_time,end_time)
+     VALUES (@v,$STOCK,'2026-09-05 00:00:00','2099-12-31 23:59:59');
+   SELECT @v;" 2>/dev/null)
 
-RESP=$(curl -s -X POST "$BASE/voucher/seckill" \
-  -H 'Content-Type: application/json' \
-  -d "$BODY")
-echo "API RESP: $RESP"
-
-VOUCHER_ID=$(printf '%s' "$RESP" | grep -o '"data":[0-9]*' | grep -o '[0-9]*' | head -1)
 if [ -z "$VOUCHER_ID" ]; then
-  echo "ERROR: could not extract voucher id, is the app up on $BASE?" >&2
+  echo "ERROR: insert failed" >&2
   exit 1
 fi
-echo "VOUCHER_ID=$VOUCHER_ID"
 
-echo "Warmed Redis stock: $(docker exec hmdp-redis redis-cli GET "seckill:stock:$VOUCHER_ID")"
-echo "Use it when running JMeter:  -JvoucherId=$VOUCHER_ID"
+docker exec hmdp-redis redis-cli SET "seckill:stock:$VOUCHER_ID" "$STOCK" >/dev/null
+echo "VOUCHER_ID=$VOUCHER_ID"
+echo "Redis stock: $(docker exec hmdp-redis redis-cli GET "seckill:stock:$VOUCHER_ID")"
+echo "Set voucherId in seckill.jmx TestPlan UDV, then copy a fresh user_tokens.txt (script 02)."

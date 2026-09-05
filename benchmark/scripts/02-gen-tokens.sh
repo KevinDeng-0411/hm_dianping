@@ -19,18 +19,23 @@ START_ID=${START_ID:-1000001}
 OUT="$(cd "$(dirname "$0")/.." && pwd)/user_tokens.txt"
 : > "$OUT"
 
-gen() {
+tokens() {
+  for ((i = 1; i <= N; i++)); do
+    printf 'bench-%06d\n' "$i"
+  done
+}
+
+redis_cmds() {
   for ((i = 1; i <= N; i++)); do
     uid=$((START_ID + i - 1))
     tok="bench-$(printf '%06d' "$i")"
     printf 'HMSET login:token:%s id "%d" nickName "bench%d" icon ""\n' "$tok" "$uid" "$uid"
     printf 'EXPIRE login:token:%s 1800\n' "$tok"
-    printf '%s\n' "$tok"
   done
 }
 
-gen >> "$OUT"   # token list for JMeter
-gen | docker exec -i hmdp-redis redis-cli >/dev/null
+tokens >> "$OUT"                 # token list (one per line) for JMeter
+redis_cmds | docker exec -i hmdp-redis redis-cli >/dev/null   # seed login:token:* hashes
 
 COUNT=$(wc -l < "$OUT" | tr -d ' ')
 echo "Generated $COUNT tokens in $OUT"

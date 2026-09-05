@@ -31,3 +31,9 @@ build/
 
 ### VS Code ###
 .vscode/
+
+# benchmark run artifacts
+benchmark/jmeter/result_*.csv
+benchmark/user_tokens.txt
+benchmark/jmeter/user_tokens.txt
+*.log

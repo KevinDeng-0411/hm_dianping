@@ -9,4 +9,6 @@ FROM eclipse-temurin:11-jre
 WORKDIR /app
 COPY --from=builder /app/target/*.jar app.jar
 EXPOSE 8081
-ENTRYPOINT ["java", "-jar", "-Dspring.profiles.active=docker", "app.jar"]
+# Profile is driven by SPRING_PROFILES_ACTIVE env (docker-compose.yml sets docker,bench).
+# Keeping it out of the entrypoint lets the bench profile be activated for load tests.
+ENTRYPOINT ["java", "-jar", "app.jar"]

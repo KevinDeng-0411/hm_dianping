@@ -13,13 +13,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 JMETER_DIR="$(cd "$SCRIPT_DIR/../jmeter" && pwd)"
-JMX="$JMETER_DIR/cache-tier.jmx"
 
 HOST=${HOST:-localhost}
 PORT=${PORT:-8081}
-SHOP_ID=${SHOP_ID:-1}
-THREADS=${THREADS:-200}
-LOOPS=${LOOPS:-500}
 MODES=${MODES:-"mysql redis two"}
 
 sample_ops() {
@@ -44,17 +40,17 @@ avg_ops() {
 
 cd "$JMETER_DIR"
 
+echo "Warming caches (two-tier reads) so redis/two runs measure hot hits..."
+for _ in $(seq 1 20); do curl -s "http://$HOST:$PORT/bench/shop/1?mode=two" >/dev/null; done
+
 for MODE in $MODES; do
-  echo "================ mode=$MODE (shop=$SHOP_ID, ${THREADS}x${LOOPS}) ================"
+  echo "================ mode=$MODE ================"
   rm -f "result_cache_$MODE.csv"
 
   L1_BEFORE=$(l1_json 2>/dev/null || echo '{}')
 
   OPS_PID=$(start_ops_sampler "$MODE")
-  jmeter -n -t "$JMX" \
-    -Jmode="$MODE" -JshopId="$SHOP_ID" \
-    -Jthreads="$THREADS" -Jloops="$LOOPS" \
-    -Jhost="$HOST" -Jport="$PORT" 2>&1 | tail -3
+  jmeter -n -t "cache-$MODE.jmx" -l "result_cache_$MODE.csv" 2>&1 | tail -2
   kill "$OPS_PID" 2>/dev/null || true
 
   L1_AFTER=$(l1_json 2>/dev/null || echo '{}')

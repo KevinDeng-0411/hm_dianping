@@ -155,10 +155,14 @@ Per tier the script:
 - **L1 hit rate**: window hit-rate = (hitAfter - hitBefore) / (reqAfter - reqBefore).
 - **Redis offload**: sampled ops/sec during the `two` run vs the `redis` run.
 
-| tier  | sample | avg (ms) | P99 (ms) | QPS | Redis ops/s | L1 hit rate |
-|-------|--------|----------|----------|-----|-------------|-------------|
-| mysql | -      | -        | -        | -   | -           | n/a         |
-| redis | -      | -        | -        | -   | -           | n/a         |
-| two   | -      | -        | -        | -   | -           | -           |
+| tier  | sample | avg (ms) | P99 (ms) | QPS  | Redis ops/s | L1 hit rate (window) |
+|-------|--------|----------|----------|------|-------------|----------------------|
+| mysql | 50k    | 0.96     | 3        | 4880 | 3           | n/a                  |
+| redis | 50k    | 0.82     | 4        | 4935 | **4063**    | n/a                  |
+| two   | 50k    | **0.44** | 4        | 4996 | **12**      | **100%**             |
 
-> Placeholder — fill in after running `04-run-cache-bench.sh`.
+Same hot-key workload, 100 threads × 500 loops each. With Caffeine L1 the
+Redis request rate drops ~4063 → ~12 ops/s (~99.7% offload) and the two-tier
+path is ~2.2× faster than a direct DB read. Full write-up with the seckill
+steady-state (~1485 QPS) and burst numbers:
+[results-2026-09-05.md](results-2026-09-05.md).
