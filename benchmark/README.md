@@ -120,3 +120,45 @@ QPS:  (1500 - 1000) / 1000 = 50%
 - Keepalive and baseline hardware matter for absolute QPS. What the resume
   claims (and this harness reproduces) is the **relative** -64.8% / +50% /
   -31.9%.
+
+## Cache tier benchmark (MySQL / Redis / two-level)
+
+Quantifies the multi-level cache payoff on the hot-shop read path (`/shop/{id}
+in production, `/bench/shop/{id}` here) across three tiers:
+
+- `mysql`: straight DB read (`getById`) — no cache
+- `redis`: Redis L2 + DB (`queryWithMutex`) — no Caffeine L1
+- `two`:   Caffeine L1 -> Redis L2 -> DB (current product path)
+
+The `two`/`mysql` avg gap is "how much faster the hot data is"; the `two` vs
+`redis` Redis ops gap is the offload; Caffeine `stats()` provides the L1 hit
+rate. Backed by a `bench`-profile-only controller that is absent in normal
+runs; `docker-compose.yml` sets `SPRING_PROFILES_ACTIVE: docker,bench`.
+
+### Run
+
+```bash
+./benchmark/scripts/04-run-cache-bench.sh
+# tune: SHOP_ID=1 THREADS=200 LOOPS=500 MODES="mysql redis two" HOST PORT
+```
+
+Per tier the script:
+
+1. runs the JMeter plan (`jmeter/cache-tier.jmx`, GET `/bench/shop/{id}?mode=`)
+2. samples Redis `instantaneous_ops_per_sec` throughout the run
+3. reads Caffeine `stats()` (hit/miss/request) before & after via `/bench/l1stats`
+4. prints avg / P99 / throughput via `03-analyze.py`
+
+### Reading the numbers
+
+- **Visit speedup**: avg/P99 across `mysql -> redis -> two`.
+- **L1 hit rate**: window hit-rate = (hitAfter - hitBefore) / (reqAfter - reqBefore).
+- **Redis offload**: sampled ops/sec during the `two` run vs the `redis` run.
+
+| tier  | sample | avg (ms) | P99 (ms) | QPS | Redis ops/s | L1 hit rate |
+|-------|--------|----------|----------|-----|-------------|-------------|
+| mysql | -      | -        | -        | -   | -           | n/a         |
+| redis | -      | -        | -        | -   | -           | n/a         |
+| two   | -      | -        | -        | -   | -           | -           |
+
+> Placeholder — fill in after running `04-run-cache-bench.sh`.
