@@ -13,6 +13,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
 import org.springframework.aop.framework.AopContext;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
@@ -60,13 +61,18 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
         //尝试获取锁
         boolean tryLock = lock.tryLock();
         if (!tryLock) {
-            //获取锁失败 抛出异常使消息进入Pending List重试
+            //获取锁失败 抛出异常使消息进入重试
             log.error("不允许重复下单 ");
             throw new RuntimeException("获取锁失败，用户重复下单");
         }
         //成功 执行下面的逻辑创建订单
         try {
-            proxy.createVoucherOrder(order);
+            // 在消费线程自身的代理上下文内取代理，@Transactional 才生效。
+            // 这里不能再依赖请求线程 seckillVoucher 里赋给实例字段的 proxy：
+            // 那是跨线程写共享字段，有竞态，且手工向 Kafka 补投消息时 proxy 为 null。
+            IVoucherOrderService currentProxy =
+                    (IVoucherOrderService) AopContext.currentProxy();
+            currentProxy.createVoucherOrder(order);
         } finally {
             lock.unlock();
         }
@@ -78,9 +84,6 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
         SECKILL_SCRIPT.setLocation(new ClassPathResource("seckill.lua"));
         SECKILL_SCRIPT.setResultType(Long.class);
     }
-
-
-    private IVoucherOrderService proxy;
 
     @Override
     public Result seckillVoucher(Long voucherId) {
@@ -105,7 +108,6 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
         kafkaTemplate.send("seckill-order", String.valueOf(orderId),
                 JSONUtil.toJsonStr(voucherOrder));
 
-        proxy = (IVoucherOrderService) AopContext.currentProxy();
         return Result.ok(orderId);
     }
 
@@ -197,8 +199,10 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
         //判断订单是否存在 存在 则抛出异常使消息进入Pending List
         Integer count = query().eq("user_id", userId).eq("voucher_id", voucherId).count();
         if (count > 0) {
-            log.error("用户已经购买过");
-            throw new RuntimeException("用户已购买过该优惠券");
+            // 判重命中 = 幂等重复消费（唯一订单ID/用户+券已存在）。
+            // 抛 DuplicateKeyException，由消费者识别为"已处理"而吞掉，避免 Kafka 无谓重试
+            log.warn("用户已购买过该优惠券，视为重复消费: userId={}, voucherId={}", userId, voucherId);
+            throw new DuplicateKeyException("用户已购买过该优惠券，视为重复消费");
         }
         //不存在 进行库存扣减创建订单
         boolean isUpdate = seckillVoucherService.update().setSql("stock = stock - 1")
