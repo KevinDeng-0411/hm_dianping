@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# Run the three cache-tier benchmarks (mysql / redis / two) back-to-back via
-# JMeter against /bench/shop/{id}?mode=..., sampling Redis ops/sec during each
-# run and capturing Caffeine L1 stats around the "two" tier.
+# 用 JMeter 依次跑缓存三档压测（mysql / redis / two），接口
+# GET /bench/shop/{id}?mode=...。每档运行期间采样 Redis ops/s，
+# two 档前后各读一次 Caffeine L1 stats。
 #
-# Requires: app up with the "bench" profile (docker-compose sets docker,bench),
-#           jmeter on PATH, hmdp-redis container.
+# 前提：app 以 bench profile 启动（docker-compose 已设 docker,bench）、
+#        jmeter 在 PATH、hmdp-redis 容器在跑。
 #
-# Usage:  ./04-run-cache-bench.sh
-# Env:    SHOP_ID=1  THREADS=200  LOOPS=500  MODES="mysql redis two"  HOST PORT
-# Result: benchmark/jmeter/result_cache_{mode}.csv + printed summary.
+# 用法:  ./04-run-cache-bench.sh
+# 环境变量: MODES="mysql redis two"  HOST PORT
+# 产物: benchmark/jmeter/result_cache_{mode}.csv + 控制台汇总。
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"

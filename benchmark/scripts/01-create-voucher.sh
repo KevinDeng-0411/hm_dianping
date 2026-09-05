@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
-# Create a seckill voucher (tb_voucher + tb_seckill_voucher) directly in the
-# hmdp-mysql container and pre-warm the Redis stock key. Prints the voucher id.
+# 直接在 hmdp-mysql 容器里插入一张秒杀券（tb_voucher + tb_seckill_voucher），
+# 并预热 Redis 库存 key。打印券 id。
 #
-# Note: goes straight to SQL because the /voucher/seckill API path can't map a
-# full Voucher onto the current tb_voucher schema cleanly (some entity fields
-# have no matching column). For benchmark data, direct SQL is the stable route.
+# 说明：走 SQL 是因为 /voucher/seckill 接口在当前 tb_voucher 表结构下无法
+# 完整映射 Voucher 实体（部分实体字段没有对应列）。压测造数走 SQL 最稳。
 #
-# Usage:   ./01-create-voucher.sh [stock]
-# Output:  VOUCHER_ID=<id>
+# 用法:   ./01-create-voucher.sh [库存]
+# 输出:   VOUCHER_ID=<id>
 set -euo pipefail
 
 STOCK=${1:-200}

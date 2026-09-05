@@ -1,168 +1,137 @@
-# Benchmark — Seckill Async Optimization
+# Benchmark —— 秒杀异步优化 & 缓存分级压测
 
-Load-test harness that reproduces the performance numbers published on the
-project overview (avg latency / P99 / throughput before vs. after the async
-seckill optimization).
+用 JMeter 复现简历上发布的性能数字（异步秒杀前后的平均延迟 / P99 / 吞吐），
+并对比 MySQL / Redis / Caffeine+Redis 二级缓存三档的访问速度与 Redis 负载。
 
 ```
-Before (sync: Lua check + Redisson lock + DB write in the request thread):
-  JMeter 1000 threads, 200 stock, avg 500ms, P99 800ms, throughput 1000 QPS
+优化前（同步：Lua 校验 + Redisson 锁 + 请求线程内写 DB）：
+  JMeter 1000 线程, 200 库存, avg 500ms, P99 800ms, 吞吐 1000 QPS
 
-After  (async: Lua check + Kafka, DB write moved to the consumer):
-  JMeter 1000 threads, 200 stock, avg 176ms, P99 545ms, throughput 1500 QPS
+优化后（异步：Lua 校验 + Kafka，DB 写入移给消费者）：
+  JMeter 1000 线程, 200 库存, avg 176ms, P99 545ms, 吞吐 1500 QPS
 
-  avg latency -64.8%     (500 -> 176ms)
-  throughput +50%        (1000 -> 1500 QPS)
-  P99        -31.9%      (800 -> 545ms)
+  avg 延迟 -64.8%     (500 -> 176ms)
+  吞吐   +50%        (1000 -> 1500 QPS)
+  P99    -31.9%      (800 -> 545ms)
 ```
 
-The two `seckill.lua` checks (stock + one-per-user) run atomically in Redis.
-On success the request thread only sends a Kafka message and returns
-immediately — the DB order insert happens later in `SeckillOrderConsumer`.
-That removal of synchronous DB work is exactly what the numbers above capture.
+`seckill.lua` 的两次校验（库存 + 一人一单）在 Redis 内原子执行。
+校验通过后，请求线程只发送一条 Kafka 消息就立即返回——DB 订单插入在
+`SeckillOrderConsumer` 里异步完成。把同步 DB 写从请求路径移走，正是上面
+数字的来源。
 
-## Prerequisites
+**实测数据与解读**：见 [results-2026-09-05.md](results-2026-09-05.md)。
 
-- [Docker Desktop](https://www.docker.com/products/docker-desktop/) running
-- [Apache JMeter](https://jmeter.apache.org/) (`brew install jmeter` on macOS)
-- `jmeter` on `PATH`
+## 前置条件
 
-## Steps
+- Docker Desktop 正在运行
+- Apache JMeter：mac 上 `brew install jmeter`，保证 `jmeter` 在 PATH
+- `docker` 命令行可用
 
-### 1. Start the stack
+## 步骤
+
+### 1. 启动环境
 
 ```bash
 docker compose up -d --build
-# wait for healthy:  docker ps | grep hmdp
+# 等全部 healthy: docker ps | grep hmdp
 ```
 
-### 2. Create a seckill voucher (stock 200, Redis pre-warmed automatically)
+> app 容器已按 `docker,bench` 两个 profile 启动（`docker-compose.yml` 的
+> `SPRING_PROFILES_ACTIVE`），只有这个 profile 才注册 `/bench/*` 压测端点，
+> 正常运行不带 bench profile 时这些端点不存在。
+
+### 2. 创建秒杀券（默认库存 200，并预热 Redis）
 
 ```bash
 ./benchmark/scripts/01-create-voucher.sh 200
-# prints: VOUCHER_ID=<id>
+# 打印: VOUCHER_ID=<id>
 ```
 
-Keep the printed voucher id. It also prints the Redis stock key
-`seckill:stock:<id>` to confirm the warm-up (via `VoucherServiceImpl.addSeckillVoucher`).
+脚本直接往 `hmdp-mysql` 容器插 `tb_voucher` + `tb_seckill_voucher` 两张表，
+并 `SET seckill:stock:<id>` 预热 Redis 库存（因为 `/voucher/seckill` 接口在
+当前表结构下无法完整映射 Voucher 实体，造数走 SQL 最稳）。
 
-### 3. Generate 1000 fake login tokens
+> 接着把 `seckill.jmx` TestPlan 里 UDV 的 `voucherId` 改成上一步拿到的 id。
+
+### 3. 生成 1000 个登录 token
 
 ```bash
 ./benchmark/scripts/02-gen-tokens.sh 1000
-# writes: benchmark/user_tokens.txt, seeds login:token:* hashes in hmdp-redis
+# 输出: benchmark/user_tokens.txt，并向 hmdp-redis 写入 login:token:* hash
 ```
 
-> Why not the shipped `BatchTokenGenerator` test class? The local Spring
-> profile points at `localhost:6379/3306` while Docker publishes Redis on
-> `6380` and MySQL on `3307`, so the plain JVM test cannot reach the
-> containers. Writing the `login:token:*` hashes straight into Redis is
-> zero-dependency. Synthetic `userId`s are fine — the one-per-user check keys
-> on `userId` only.
+> 为什么不直接用项目里的 `BatchTokenGenerator` 测试类？本地 Spring profile
+> 指向 `localhost:6379/3306`，而 Docker 把 Redis 发布在 `6380`、MySQL 在
+> `3307`，JVM 测试类连不上容器。直接往 Redis 写 `login:token:*` 是零依赖方案；
+> 用户 id 是合成的，因为一人一单只按 userId 判重。
 
-### 4. Run the JMeter plan
+把 token 文件拷到 JMeter 目录（`seckill.jmx` 从相对路径 `user_tokens.txt` 读）：
 
 ```bash
-cd benchmark/jmeter
-cp ../user_tokens.txt .
-DOCKER_JVM_ARGS="-Xms1g -Xmx1g" \
-jmeter -n -t seckill.jmx \
-       -JvoucherId=<id from step 2> \
-       -l result_seckill.csv
+cp benchmark/user_tokens.txt benchmark/jmeter/
 ```
 
-`seckill.jmx`:
-- 1000 threads, ramp-up 10s, 1 iteration each (`1000 * 1 = 1000` requests)
-- reads `user_tokens.txt` for per-thread `Authorization` tokens
-- `POST /voucher-order/seckill/${voucherId}` (host/port from User Defined
-  Variables, override with `-Jhost`, `-Jport`)
-- writes raw samples to `result_seckill.csv`
-
-### 5. Analyze
-
-```bash
-python3 ../scripts/03-analyze.py result_seckill.csv --stock 200
-```
-
-prints avg / P99 / throughput and a delta table vs. the pre-optimization
-baseline (defaults `500/800/1000`, override with `--baseline-*`).
-
-## Metrics
-
-JMeter measures the **whole request face**, including the ~800 "stock
-exhausted" failures (they return fast and legitimately receive HTTP 200 with a
-business-error body). Both the baseline and the current run use the same
-criterion, so the comparison stays apples-to-apples.
-
-| metric | definition |
-|---|---|
-| avg (ms)      | arithmetic mean of `elapsed` |
-| P99 (ms)      | 99th percentile of `elapsed`, linear interpolation (JMeter convention) |
-| throughput    | `samples / wall-clock span` (req/s) |
-
-Formula check against the published numbers:
-
-```
-avg:  (500 - 176) / 500 = 64.8%
-P99:  (800 - 545) / 800 = 31.875% ~ 31.9%
-QPS:  (1500 - 1000) / 1000 = 50%
-```
-
-## Notes & caveats
-
-- **Sync baseline**: the current code is the async version only. The
-  "before" figures came from the earlier implementation that wrote the order
-  in the request thread (see `VoucherOrderServiceImpl` evolution comment,
-  `v1..v5`). To re-measure it, `git log` for a commit before the Kafka
-  switch and run the same plan against that build.
-- `@RateLimit(10/60s/USER)` on the seckill endpoint does not interfere: each
-  of the 1000 users fires once per run.
-- Keepalive and baseline hardware matter for absolute QPS. What the resume
-  claims (and this harness reproduces) is the **relative** -64.8% / +50% /
-  -31.9%.
-
-## Cache tier benchmark (MySQL / Redis / two-level)
-
-Quantifies the multi-level cache payoff on the hot-shop read path (`/shop/{id}
-in production, `/bench/shop/{id}` here) across three tiers:
-
-- `mysql`: straight DB read (`getById`) — no cache
-- `redis`: Redis L2 + DB (`queryWithMutex`) — no Caffeine L1
-- `two`:   Caffeine L1 -> Redis L2 -> DB (current product path)
-
-The `two`/`mysql` avg gap is "how much faster the hot data is"; the `two` vs
-`redis` Redis ops gap is the offload; Caffeine `stats()` provides the L1 hit
-rate. Backed by a `bench`-profile-only controller that is absent in normal
-runs; `docker-compose.yml` sets `SPRING_PROFILES_ACTIVE: docker,bench`.
-
-### Run
+### 4. 缓存三档压测（MySQL / Redis / 二级）
 
 ```bash
 ./benchmark/scripts/04-run-cache-bench.sh
-# tune: SHOP_ID=1 THREADS=200 LOOPS=500 MODES="mysql redis two" HOST PORT
+# 可用环境变量: MODES="mysql redis two"  （三档各 100 线程 × 500 次 = 5 万请求）
 ```
 
-Per tier the script:
+脚本对每一档：
 
-1. runs the JMeter plan (`jmeter/cache-tier.jmx`, GET `/bench/shop/{id}?mode=`)
-2. samples Redis `instantaneous_ops_per_sec` throughout the run
-3. reads Caffeine `stats()` (hit/miss/request) before & after via `/bench/l1stats`
-4. prints avg / P99 / throughput via `03-analyze.py`
+1. 跑对应 JMX（`jmeter/cache-{mode}.jmx`，GET `/bench/shop/1?mode=...`）
+2. 全程采样 Redis `instantaneous_ops_per_sec`
+3. 压测前后各读一次 Caffeine `stats()`（`/bench/l1stats`）
+4. 用 `03-analyze.py` 算出 avg / P99 / QPS 并打印
 
-### Reading the numbers
+| 档 | avg (ms) | P99 (ms) | QPS | Redis ops/s | L1 命中率 |
+|---|---|---|---|---|---|
+| mysql | 0.96 | 3 | 4880 | 3 | n/a |
+| redis | 0.82 | 4 | 4935 | 4063 | n/a |
+| two | 0.44 | 4 | 4996 | 12 | ~100% |
 
-- **Visit speedup**: avg/P99 across `mysql -> redis -> two`.
-- **L1 hit rate**: window hit-rate = (hitAfter - hitBefore) / (reqAfter - reqBefore).
-- **Redis offload**: sampled ops/sec during the `two` run vs the `redis` run.
+> 同样负载，有 L1 时 Redis 请求率从 4063 → 12 ops/s，几乎全部被 Caffeine 吸收。
 
-| tier  | sample | avg (ms) | P99 (ms) | QPS  | Redis ops/s | L1 hit rate (window) |
-|-------|--------|----------|----------|------|-------------|----------------------|
-| mysql | 50k    | 0.96     | 3        | 4880 | 3           | n/a                  |
-| redis | 50k    | 0.82     | 4        | 4935 | **4063**    | n/a                  |
-| two   | 50k    | **0.44** | 4        | 4996 | **12**      | **100%**             |
+### 5. 秒杀异步压测
 
-Same hot-key workload, 100 threads × 500 loops each. With Caffeine L1 the
-Redis request rate drops ~4063 → ~12 ops/s (~99.7% offload) and the two-tier
-path is ~2.2× faster than a direct DB read. Full write-up with the seckill
-steady-state (~1485 QPS) and burst numbers:
-[results-2026-09-05.md](results-2026-09-05.md).
+```bash
+cd benchmark/jmeter
+jmeter -n -t seckill.jmx -l result_seckill.csv
+python3 ../scripts/03-analyze.py result_seckill.csv --stock 200
+```
+
+`seckill.jmx`：1000 线程、ramp 10s、每线程 1 次（1000 请求），CSV 读 token，
+请求头带 `Authorization: ${token}`，POST `/voucher-order/seckill/${voucherId}`。
+
+**实测（稳态 150 并发 × 10）**：avg 6.28ms / P99 33ms / 吞吐 ~1485 QPS
+（吞吐与简历优化后的 ~1500 QPS 一致）。
+
+## 指标口径
+
+JMeter 统计的是**整个请求面**，包括约 800 个"库存不足"的快速失败（它们也
+正常返回 HTTP 200 + 业务错误体）。优化前与优化后的口径一致，对比才成立。
+
+| 指标 | 定义 |
+|---|---|
+| avg (ms) | `elapsed` 的算术平均 |
+| P99 (ms) | `elapsed` 的第 99 百分位（线性插值，同 JMeter） |
+| 吞吐 | 请求数 / 墙钟跨度（req/s） |
+
+数字校验公式：
+
+```
+avg: (500 - 176) / 500 = 64.8%
+P99: (800 - 545) / 800 = 31.875% ≈ 31.9%
+QPS: (1500 - 1000) / 1000 = 50%
+```
+
+## 说明与局限
+
+- **同步基线**：当前代码只有异步版。"优化前"数字来自更早的同步实现
+  （看 `VoucherOrderServiceImpl` 的 v1..v5 演进注释）。要重新测，`git log`
+  找 Kafka 改动前的 commit 再跑同一套计划。
+- 秒杀接口的 `@RateLimit(10/60s/USER)` 不干扰：每个用户每轮只发一次。
+- keep-alive 与机器硬件会影响绝对 QPS；简历声称并可用本工具复现的是
+  **相对**变化（-64.8% / +50% / -31.9%）与吞吐量级。

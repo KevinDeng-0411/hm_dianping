@@ -1,17 +1,15 @@
 #!/usr/bin/env bash
-# Generate N fake login tokens directly into the hmdp-redis container
-# and dump them to user_tokens.txt for JMeter.
+# 批量生成 N 个假登录 token：直接写进 hmdp-redis 容器，并导出到
+# user_tokens.txt 供 JMeter 读取。
 #
-# Why not the BatchTokenGenerator test class? The local Spring profile points
-# at localhost:6379/3306 while Docker publishes redis on 6380 and mysql on 3307,
-# so the JVM test class cannot reach the containers. Writing the login:token:*
-# hashes straight into Redis keeps this zero-dependency.
+# 为什么不用项目里的 BatchTokenGenerator 测试类？本地 Spring profile 指向
+# localhost:6379/3306，而 Docker 把 Redis 发布在 6380、MySQL 在 3307，
+# JVM 测试类连不上容器。直接写 login:token:* hash 是零依赖方案。
 #
-# LoginInterceptor only checks the hash exists and reads id/nickName/icon.
-# userId values are synthetic (ui = START_ID + i), which is fine: the seckill
-# path keys "one order per user" by userId only.
+# LoginInterceptor 只校验 hash 存在并读 id/nickName/icon；userId 是合成的
+# （uid = START_ID + i），没问题——秒杀的一人一单只按 userId 判重。
 #
-# Usage: ./02-gen-tokens.sh [N]
+# 用法: ./02-gen-tokens.sh [数量N]
 set -euo pipefail
 
 N=${1:-1000}
