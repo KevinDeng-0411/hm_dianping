@@ -89,11 +89,17 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
         //判断是否获取互斥锁
         boolean lock = tryLock(lockKey);
         if (lock) {
-            //获取锁成功 DoubleCheck 此时是否有缓存 否则开启独立线程实现缓存重建
-            shopJson = stringRedisTemplate.opsForValue().get(key);
-            if (StrUtil.isNotBlank(shopJson)) {
-                RedisData cachedData = JSONUtil.toBean(shopJson, RedisData.class);
-                return JSONUtil.toBean((JSONObject) cachedData.getData(), Shop.class);
+            // Double Check：拿到锁后重读。逻辑过期下 key 永不因重建而删除，
+            // 所以判断对象是"过期时间是否已被刷新"，而不是"缓存是否存在"：
+            // 已被并发线程刷新(expireTime > now) → 返回新数据并释放锁
+            //   · 仍过期 → 提交异步重建（重建完成由任务 finally 释放锁）
+            String cachedJson = stringRedisTemplate.opsForValue().get(key);
+            if (StrUtil.isNotBlank(cachedJson)) {
+                RedisData cachedData = JSONUtil.toBean(cachedJson, RedisData.class);
+                if (cachedData.getExpireTime().isAfter(LocalDateTime.now())) {
+                    unLock(lockKey);
+                    return JSONUtil.toBean((JSONObject) cachedData.getData(), Shop.class);
+                }
             }
 
             cacheRebuildExecutor.submit(() -> {
