@@ -106,7 +106,11 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
         voucherOrder.setUserId(userId);
         voucherOrder.setVoucherId(voucherId);
         kafkaTemplate.send("seckill-order", String.valueOf(orderId),
-                JSONUtil.toJsonStr(voucherOrder));
+                JSONUtil.toJsonStr(voucherOrder))
+                // 发送结果可见性：失败打 ERROR（配了 acks=all + 幂等后，这里主要是留痕兜底）
+                .addCallback(
+                        result -> { },
+                        ex -> log.error("秒杀订单消息发送失败(orderId={}):", orderId, ex));
 
         return Result.ok(orderId);
     }

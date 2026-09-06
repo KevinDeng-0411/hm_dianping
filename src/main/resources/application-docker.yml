@@ -8,9 +8,14 @@ spring:
     consumer:
       group-id: hmdp-group
       auto-offset-reset: earliest
-      enable-auto-commit: true
+      # 关闭自动提交：处理成功后才提交 offset，崩溃只引发重复消费（由唯一键幂等兜底），不丢消息
+      enable-auto-commit: false
+      ack-mode: batch
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all
+      enable-idempotence: true
+      retries: 3

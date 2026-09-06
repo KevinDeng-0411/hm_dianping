@@ -105,8 +105,10 @@ python3 ../scripts/03-analyze.py result_seckill.csv --stock 200
 `seckill.jmx`：1000 线程、ramp 10s、每线程 1 次（1000 请求），CSV 读 token，
 请求头带 `Authorization: ${token}`，POST `/voucher-order/seckill/${voucherId}`。
 
-**实测（稳态 150 并发 × 10）**：avg 6.28ms / P99 33ms / 吞吐 ~1485 QPS
-（吞吐与简历优化后的 ~1500 QPS 一致）。
+**实测（稳态 200 并发 × 5，`shareMode.all` 打散 token）**：avg 9.0ms / P99 58ms /
+吞吐 ~1050 QPS；洪峰 1000 并发 avg ~1.1s（连接层瓶颈）。并验证**不丢**：
+Redis 判成功 = DB 落库 = 200（详见 results）。早期 1485 QPS/6.28ms 是
+`shareMode.thread` 未打散 token、被限流污染的数据，已修正。
 
 ## 指标口径
 

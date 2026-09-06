@@ -10,7 +10,7 @@
         <collectionProp name="Arguments.arguments">
           <elementProp name="voucherId" elementType="Argument">
             <stringProp name="Argument.name">voucherId</stringProp>
-            <stringProp name="Argument.value">16</stringProp>
+            <stringProp name="Argument.value">20</stringProp>
             <stringProp name="Argument.metadata">=</stringProp>
           </elementProp>
         </collectionProp>
@@ -41,7 +41,7 @@
           <boolProp name="quotedData">false</boolProp>
           <boolProp name="recycle">true</boolProp>
           <boolProp name="stopThread">false</boolProp>
-          <stringProp name="shareMode">shareMode.thread</stringProp>
+          <stringProp name="shareMode">shareMode.all</stringProp>
         </CSVDataSet>
         <hashTree/>
         <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="Authorization header" enabled="true">

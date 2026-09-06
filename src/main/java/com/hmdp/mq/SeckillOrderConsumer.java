@@ -22,7 +22,8 @@ public class SeckillOrderConsumer {
     @Resource
     private VoucherOrderServiceImpl voucherOrderService;
 
-    @KafkaListener(topics = "seckill-order", groupId = "hmdp-seckill")
+    // concurrency=3 与主题分区数(3)对齐：单实例也能并行消费 3 个分区，缓解洪峰积压
+    @KafkaListener(topics = "seckill-order", groupId = "hmdp-seckill", concurrency = "3")
     public void onMessage(String message) {
         log.debug("收到秒杀订单消息: {}", message);
         try {
