@@ -222,7 +222,7 @@ token 打散 bug 才发现早期数据不真实，于是重测并如实更新了
 ### Q17. Double Check / 缓存重建的细节讲讲？
 
 **答：**
-"加锁后**再读一次缓存**再决定要不要重建（double check），因为抢锁期间很可能另一个线程已经重建完了，避免重复查库。重建用独立线程池 `CACHE_REBUILD_EXECUTOR`（10 线程）异步做，finally 里释放锁，防止异常把锁带死。"
+"加锁后**再读一次缓存**再决定要不要重建（double check），因为抢锁期间很可能另一个线程已经重建完了，避免重复查库。重建用**注入的 Spring 托管线程池 `cacheRebuildExecutor`**（有界队列 + 命名线程 + CallerRuns，见下方技术演进）异步做，finally 里释放锁，防止异常把锁带死。"
 
 ### Q18. 缓存雪崩呢？你做了什么？
 
@@ -233,7 +233,26 @@ token 打散 bug 才发现早期数据不真实，于是重测并如实更新了
 
 - **穿透/击穿/雪崩三兄弟的区别与各自解法**：空值+布隆 / 互斥锁+逻辑过期 / TTL 随机+多级。
 - **互斥锁的缺陷**：自旋重试无上限（`Thread.sleep(50)` 递归）、锁误删、锁过期导致多线程都进重建——主动说出弱点再给"加重试上限/续期/分布式锁"的修法，是加分项。
-- **逻辑过期线程池**：无拒绝策略时可能积压，也是把它当备选的论据之一。
+- **逻辑过期线程池**：已从 `Executors.newFixedThreadPool(10)` 演进为 Spring 托管的
+  `ThreadPoolExecutor`（core 4 / max 8、有界队列 100、命名前缀 `cache-rebuild-`、
+  CallerRuns 饱和策略），有界队列防无限积压、满时调用线程兜底重建。
+
+### 技术演进：缓存重建线程池（Executors → ThreadPoolExecutor）
+
+- **早期**：`Executors.newFixedThreadPool(10)`。三个坑：无界 `LinkedBlockingQueue`
+  （任务可无限积压，内存风险）；无饱和策略（队列永不满，等于没有背压控制）；
+  默认线程名 `pool-N-thread-M`（排障难）。核心线程还常驻不回收。
+- **现在**：把 `ThreadPoolExecutor` 注册成 Spring Bean `cacheRebuildExecutor`
+  （在 `CaffeineConfig`）：core 4 / max 8（重建是 IO 密集：查 DB + 写 Redis，不按核数
+  死配）、`ArrayBlockingQueue(100)`（有界，防积压）、`cache-rebuild-` 命名线程、
+  `CallerRunsPolicy`（队列满让调用线程兜底重建，顺带天然限制并发重建数）、
+  `destroyMethod="shutdown"`（Spring 关闭时优雅回收）。
+- **为什么这对"逻辑过期重建"是合适的**：重建是**低频偶发任务**，core 小不空耗资源；
+  积压时有界队列 + CallerRuns 让系统"宁可让请求线程自己重建，也不无限排队"——和
+  "热点 key 过期瞬间 + 少量重建"的语义匹配。
+- **面试话术**："我原来是 `Executors` 静态工厂一把梭，被追问'无界队列怎么办、线程名
+  能不能看出来'之后，改成了有界队列 + 命名线程 + 饱和策略的 `ThreadPoolExecutor`，
+  这也是我对'缓存重建这种低并发偶发任务'线程池选型的理解落地。"
 
 ---
 

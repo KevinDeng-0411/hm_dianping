@@ -20,7 +20,6 @@ import org.springframework.transaction.annotation.Transactional;
 import javax.annotation.Resource;
 import java.time.LocalDateTime;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -60,7 +59,10 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
         return Result.ok(shop);
     }
 
-    private static final ExecutorService CACHE_REBUILD_EXECUTOR = Executors.newFixedThreadPool(10);
+    // 逻辑过期异步重建用线程池：由 CaffeineConfig 提供的 Spring 管理
+    // ThreadPoolExecutor（有界队列 + 命名线程 + CallerRuns 饱和策略）
+    @Resource(name = "cacheRebuildExecutor")
+    private ExecutorService cacheRebuildExecutor;
 
     public Shop queryWithLogicalExpire(Long id) {
         //从redis中查询
@@ -94,7 +96,7 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
                 return JSONUtil.toBean((JSONObject) cachedData.getData(), Shop.class);
             }
 
-            CACHE_REBUILD_EXECUTOR.submit(() -> {
+            cacheRebuildExecutor.submit(() -> {
                 //TODO 模拟才是用这个20s 实际上需要更长时间
                 try {
                     this.saveShop2Json(id, 20L);
