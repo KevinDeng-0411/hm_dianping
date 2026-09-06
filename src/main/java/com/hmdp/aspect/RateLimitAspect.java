@@ -18,6 +18,7 @@ import org.springframework.web.context.request.ServletRequestAttributes;
 
 import javax.annotation.Resource;
 import javax.servlet.http.HttpServletRequest;
+import java.lang.reflect.Method;
 import java.util.Collections;
 
 @Slf4j
@@ -57,8 +58,10 @@ public class RateLimitAspect {
 
     private String buildKey(ProceedingJoinPoint joinPoint, RateLimit rateLimit) {
         MethodSignature signature = (MethodSignature) joinPoint.getSignature();
-        String method = signature.getMethod().getName();
-        String prefix = "rate_limit:" + method + ":";
+        Method method = signature.getMethod();
+        // key = 前缀 + 类名 + 方法名 + 维度值，带上类名避免不同 Controller 同名方法串窗口
+        String prefix = "rate_limit:" + method.getDeclaringClass().getSimpleName()
+                + ":" + method.getName() + ":";
 
         switch (rateLimit.keyType()) {
             case USER:
