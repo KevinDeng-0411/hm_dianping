@@ -18,6 +18,9 @@ public @interface RateLimit {
     /** 时间窗口（秒） */
     int windowSeconds() default 60;
 
+    /** 超出限流后的提示信息（可由接口自定义，便于区分"验证码太频繁"等场景） */
+    String message() default "请求过于频繁，请稍后重试";
+
     /** 限流维度 */
     KeyType keyType() default KeyType.USER;
 

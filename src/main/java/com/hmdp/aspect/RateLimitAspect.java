@@ -50,7 +50,7 @@ public class RateLimitAspect {
 
         if (result != null && result == 0) {
             log.warn("限流触发: key={}", key);
-            throw new RateLimitException("请求过于频繁，请稍后重试");
+            throw new RateLimitException(rateLimit.message());
         }
 
         return joinPoint.proceed();
