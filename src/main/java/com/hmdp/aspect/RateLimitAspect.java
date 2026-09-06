@@ -66,7 +66,8 @@ public class RateLimitAspect {
         switch (rateLimit.keyType()) {
             case USER:
                 UserDTO user = UserHolder.getUser();
-                return prefix + (user != null ? user.getId() : getIp());
+                // user 为空或取不到 id 时回退 IP，避免 key 维度拼出 "null"
+                return prefix + (user != null && user.getId() != null ? user.getId() : getIp());
             case IP:
                 return prefix + getIp();
             case GLOBAL:

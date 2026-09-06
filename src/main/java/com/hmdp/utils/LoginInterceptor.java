@@ -33,8 +33,9 @@ public class LoginInterceptor implements HandlerInterceptor {
         String key = RedisConstants.LOGIN_USER_KEY + token;
         Map<Object, Object> UserMap = stringRedisTemplate.opsForHash().entries(key);
 
-        //判断是否存在
-        if (UserMap == null) {
+        //注意：entries(hashKey) 在 key 不存在时返回"空 Map"而不是 null，
+        // 仅判 ==null 会让失效 token 以为登录成功（放行成空用户）
+        if (UserMap == null || UserMap.isEmpty()) {
             //不存在 拦截 401状态码
             response.sendError(401);
             return false;
