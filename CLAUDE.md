@@ -55,22 +55,22 @@ docker logs hmdp-nginx
 完整的三代方案演进记录在 `VoucherOrderServiceImpl.java`（注释中保留了前两版）：
 
 ```
-用户请求 → seckill.lua（原子化校验+扣库存+防重）→ Redis Stream → 异步消费 → 生成订单
+用户请求 → seckill.lua（原子化校验+扣库存+防重）→ Kafka(seckill-order) → 异步消费 → 生成订单
 ```
 
-- **Lua 脚本**：`src/main/resources/seckill.lua` — 判断库存 → 判断重复 → 扣 Redis 库存 → 标记用户 → XADD 到 Stream
-- **消息队列**：Redis Stream Consumer Group（`g1`），`@PostConstruct` 启动单线程消费者
-- **异常处理**：消费失败进入 Pending-List，`handlePendingList()` 从 `0` 偏移量重读
-- **一人一单**：`handlerOrder()` 用 Redisson 锁 `lock:order:{userId}`，`createVoucherOrder()` 内 DB 判重 + 乐观锁 `WHERE stock > 0`
-- **消费组**需手动创建或应用启动时创建：`XGROUP CREATE stream.orders g1 0 MKSTREAM`
+- **Lua 脚本**：`src/main/resources/seckill.lua` — 判断库存 → 判断重复 → 扣 Redis 库存 → 标记用户 → 返回 0（**发消息改由 Java 层通过 Kafka 完成**）
+- **消息队列**：Kafka Topic `seckill-order`（3 分区）；消费端 `SeckillOrderConsumer`，`@KafkaListener(groupId = "hmdp-seckill", concurrency = "3")`
+- **异常处理**：消费失败抛异常 → Kafka 自动重试（Spring Kafka 默认 `FixedBackOff(0ms, 10 次)`，**不是指数退避**）后放弃；重复消费由判重/主键幂等吞掉（`isDuplicateKey`）
+- **一人一单**：`handlerOrder()` 先抢 Redisson 锁 `lock:order:{userId}`，**锁内** `createVoucherOrder()` 判重 + 乐观锁 `WHERE stock > 0`
+- **Topic 自动创建**：`KafkaConfig` 用 `NewTopic` 声明 `seckill-order`(3 分区) 与 `cache-invalidate`，应用启动即建
 
 ### 缓存策略（`ShopServiceImpl.java` 三种方案）
 
 1. `queryWithPassThrough()` — 缓存空值防穿透（TTL 2分钟）
 2. `queryWithMutex()` — SETNX 互斥锁 + Double Check 防击穿
-3. `queryWithLogicalExpire()` — 逻辑过期 + 线程池异步重建（最优方案，需配合 `RedisData` 封装）
+3. `queryWithLogicalExpire()` — 逻辑过期 + 线程池异步重建（**备选**方案，需配合 `RedisData`；主路径实际用的是互斥锁；重建线程池为 Spring 托管 `ThreadPoolExecutor`：有界队列 100 + 命名线程 + CallerRuns）
 
-缓存更新：先写 DB 后删缓存（`Cache-Aside`）。删除失败时发布到 Redis Stream `stream.cache-invalidate`，由 `CacheInvalidateService` 退避重试（1s/2s/3s），最大 3 次后放弃，依赖 TTL 兜底保证最终一致性。
+缓存更新：先写 DB 后删缓存（`Cache-Aside`）。删除失败时把 key 发到 Kafka Topic `cache-invalidate`，由 `CacheInvalidateService` 消费重删；重试走 Spring Kafka 默认机制（`FixedBackOff(0ms, 10 次)`，**不是指数退避**），耗尽后放弃，依赖 TTL 兜底保证最终一致性。
 
 ### 滑动窗口限流
 
