@@ -144,7 +144,13 @@ handlerOrder()
     + `retries=3`；发送加 `addCallback` 失败打 ERROR 留痕
   - 消费者 `enable-auto-commit=false` + `ack-mode=batch`：**处理成功才提交 offset**，
     崩溃只会重复消费、由主键幂等兜底——取"宁可重复、不丢"的组合
-- **堆积**：`@KafkaListener(concurrency="3")` 对齐主题 3 分区，单实例也能并行消费
+- **堆积**：`@KafkaListener(topics = "seckill-order", concurrency = "3")` —— `concurrency` 是
+  **单实例内的消费线程数**（**不是实例数**），这里**对齐的是同一个 topic 的分区数**：
+  `seckill-order` 有 3 个分区，3 个消费线程各分到 1 个分区 → 单实例即可 3 路并行。
+  要点：**并行度上限 = min(总消费线程数, 分区数)**——多实例部署时线程数会超出分区数
+  （如 3 实例 × 3 线程抢 3 个分区，多出 6 个白占资源），应按实例数分摊 concurrency；
+  想真正提高并行度只能**加分区**。
+  （另一个 topic `cache-invalidate` 只有 1 个分区、消费端也未设 concurrency——缓存补偿是低频场景。）
 
 **实测验证（不丢）**：稳态（200×5）与洪峰（1000×1）两轮，Redis 判成功均 **200**、
 DB 落库均 **200**——Redis=DB 完全一致，判成功的订单一条不丢；洪峰结束后数秒内
